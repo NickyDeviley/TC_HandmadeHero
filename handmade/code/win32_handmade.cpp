@@ -14,34 +14,55 @@
 #define local_persistent static             // Variável local persistente, ficam salvas após o contexto onde foram declaradas terminar
 #define global_variable static              // Variável global, funciona apenas neste arquivo
 
+struct win32_offscreen_buffer
+{
+    BITMAPINFO info;      // Guarda as informações do buffer, tamanho/formato
+    void *memory;         // Ponteiro para buffer onde nossos pixels são desenhados
+    int width;
+    int height;
+    int pitch;
+};
+
+struct win32_window_dimension
+{
+    int width;
+    int height;
+};
+
 global_variable bool running;               // Mantém o programa aberto
+global_variable win32_offscreen_buffer globalBackBuffer;
 
-global_variable BITMAPINFO bitmapInfo;      // Guarda as informações do buffer, tamanho/formato
-global_variable void *bitmapMemory;         // Ponteiro para buffer onde nossos pixels são desenhados
+internal win32_window_dimension
+getWindowDimension (HWND window)
+{
 
-global_variable int bitmapWidth;
-global_variable int bitmapHeight;
-global_variable int bytePerPixel {4};
+    win32_window_dimension result;
+
+    RECT clientRect;                        // Armazena o tamanho da janela
+    GetClientRect(window, &clientRect);     // Método que retorna o tamanho
+    
+    // Calculando a quantidade de pixels de altura e largura
+    result.width = clientRect.right - clientRect.left;
+    result.height = clientRect.bottom - clientRect.top;
+
+    return (result);
+}
 
 internal void
-renderWeirdGradient(int blueOffset, int greenOffset)
+renderWeirdGradient(win32_offscreen_buffer buffer, int blueOffset, int greenOffset)
 {
     // Este método é responsável por desenhar um gradiente
     // que se move no buffer.
 
-    int width = bitmapWidth;
-    int height = bitmapHeight;
-
-    int pitch = width * bytePerPixel;
-    uint8_t *row = (uint8_t *) bitmapMemory;
-    for (int i = 0; i < bitmapHeight; ++i) 
+    uint8_t *row = (uint8_t *) buffer.memory;
+    for (int i = 0; i < buffer.height; ++i) 
     {
         uint32_t *pixel = (uint32_t *) row;
-        for (int j = 0; j < bitmapWidth; ++j) 
+        for (int j = 0; j < buffer.width; ++j) 
         {
             uint8_t blue = (uint8_t)(j + blueOffset);
             uint8_t green = (uint8_t)(i + greenOffset);
-            uint8_t red = 0;
+            uint8_t red = 255;
 
             /*
             
@@ -54,43 +75,48 @@ renderWeirdGradient(int blueOffset, int greenOffset)
 
             */
 
-            *pixel++ = ((green << 8) | blue);
+            *pixel++ = ((red << 16) | (green << 8) | blue);
         }
-        row += pitch;
+        row += buffer.pitch;
     }
 }
 
 internal void
-Win32ResizeDIBSection(int width, int height)
+Win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
 {
     // Este método serve para redimensionar o bitmapMemory
     // para que se mantenhha com o tamanho igual ao da janela
 
-    if (bitmapMemory)   // Verifica se a memória está ocupada e libera
+    if (buffer->memory)   // Verifica se a memória está ocupada e libera
     {
-        VirtualFree(bitmapMemory, 0, MEM_RELEASE);
+        VirtualFree(buffer->memory, 0, MEM_RELEASE);
     }
 
-    bitmapWidth = width;
-    bitmapHeight = height;
+    buffer->width = width;
+    buffer->height = height;
+    int bytePerPixel = 4;
+
+    // NOTE(Nicholas): Quando o biHeight é negativo, o windows preenche o
+    // bitmap de cima para baixo, isso significa que o primeiro pixel da
+    // janela é no canto superior esquerdo.
 
     // Preenchendo todas as informações do buffer
-    bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);         // Especifica o número de byts exigidos pela estrutura
-    bitmapInfo.bmiHeader.biWidth = bitmapWidth;                         // especifica a largura do bitmap em pixels
-    bitmapInfo.bmiHeader.biHeight = -bitmapHeight;                      // especifica a altura do bitmap em pixels
-    bitmapInfo.bmiHeader.biPlanes = 1;                                  // Especifica o número de planos para o dispositivo de destino
-    bitmapInfo.bmiHeader.biBitCount = 32;                               // Especifica o número de bits por pixel (32 bits -> 4 bytes)
-    bitmapInfo.bmiHeader.biCompression = BI_RGB;                        // Sem compressão, os bits são as cores puras
-    //bitmapInfo.bmiHeader.biSizeImage = 0;
-    //bitmapInfo.bmiHeader.biXPelsPerMeter = 0;
-    //bitmapInfo.bmiHeader.biYPelsPerMeter = 0;
-    //bitmapInfo.bmiHeader.biClrUsed = 0;
-    //bitmapInfo.bmiHeader.biClrImportant = 0;
+    buffer->info.bmiHeader.biSize = sizeof(buffer->info.bmiHeader);         // Especifica o número de byts exigidos pela estrutura
+    buffer->info.bmiHeader.biWidth = buffer->width;                         // especifica a largura do bitmap em pixels
+    buffer->info.bmiHeader.biHeight = -buffer->height;                      // especifica a altura do bitmap em pixels
+    buffer->info.bmiHeader.biPlanes = 1;                                  // Especifica o número de planos para o dispositivo de destino
+    buffer->info.bmiHeader.biBitCount = 32;                               // Especifica o número de bits por pixel (32 bits -> 4 bytes)
+    buffer->info.bmiHeader.biCompression = BI_RGB;                        // Sem compressão, os bits são as cores puras
+    //buffer->info.bmiHeader.biSizeImage = 0;
+    //buffer->info.bmiHeader.biXPelsPerMeter = 0;
+    //buffer->info.bmiHeader.biYPelsPerMeter = 0;
+    //buffer->info.bmiHeader.biClrUsed = 0;
+    //buffer->info.bmiHeader.biClrImportant = 0;
 
     // Calculando o tamanho de bytes da janela
     // e alocando memória através da API do windows
-    int bitmapMemorySize {(width * height) * bytePerPixel};
-    bitmapMemory = VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);    
+    int bitmapMemorySize {(buffer->width * buffer->height) * bytePerPixel};
+    buffer->memory = VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);    
 
     // A API do windows aloca memória através de páginas
     // isso é, a memória é dividida em pedaços de tamanho
@@ -100,28 +126,28 @@ Win32ResizeDIBSection(int width, int height)
     // parte das páginas que nós não usamos são apenas
     // desperdiçadas.
 
+    buffer->pitch = width * bytePerPixel;
 }
 
 internal void 
-Win32UpdateWindow(HDC deviceContext, RECT *windowRect, int X, int Y, int  width, int height) 
+Win32DisplayBufferInWindow(HDC deviceContext, 
+                           int windowWidth, int windowHeight, 
+                           win32_offscreen_buffer buffer) 
 {
     // Copia o Buffer de pixels para dentro da janela
     // copia o bitmapMemory (buffer) para dentro da
     // janela através do deviceContext (Acesso para a janela criada)
     // Graças a anotação "SRCCOPY"
 
-    int windowWidth {windowRect->right - windowRect->left};
-    int windowHeight {windowRect->bottom - windowRect->top};
-
     StretchDIBits(deviceContext,                // Acesso ao buffer que queremos desenhar
                   /*
                   X, Y, width, height,          // Área que vamos pintar
                   X, Y, width, height,          // Qual pedaço do buffer vamos copiar
                   */
-                  0, 0, bitmapWidth, bitmapHeight,
                   0, 0, windowWidth, windowHeight,
-                  bitmapMemory,                 // Buffer que será copiado
-                  &bitmapInfo,                  // formato/tamanho do buffer
+                  0, 0, buffer.width, buffer.height,
+                  buffer.memory,                 // Buffer que será copiado
+                  &buffer.info,                  // formato/tamanho do buffer
                   DIB_RGB_COLORS, SRCCOPY);     // Indica que os pixels são cores RGB
 
 }
@@ -133,6 +159,7 @@ Win32MainWindowCallBack(
     WPARAM WParam,      // Informações adicionais da mensagem
     LPARAM LParam)      // Informações adicionais da mensagem
 {
+
     // Quando o windows dispacha uma mensagem
     // para nossa janela este é o método que ele chama.
     // por isso a anotação "CALLBACK"
@@ -148,14 +175,6 @@ Win32MainWindowCallBack(
             // dela, para que possamos redimensionar
             // o Buffer de desenho
 
-            RECT clientRect;                        // Armazena o tamanho da janela
-            GetClientRect(window, &clientRect);     // Método que retorna o tamanho
-            
-            // Calculando a quantidade de pixels de altura e largura
-            int width {clientRect.right - clientRect.left};
-            int height {clientRect.bottom - clientRect.top};
-            
-            Win32ResizeDIBSection(width, height);   // Atualizando o buffer de desenho
         } break;
         case WM_CLOSE: {                            // fechar através do X
             running = false;
@@ -182,12 +201,12 @@ Win32MainWindowCallBack(
             int height {paint.rcPaint.bottom - paint.rcPaint.top};
             int width {paint.rcPaint.right - paint.rcPaint.left};
 
-            RECT clientRect;
-            GetClientRect(window, &clientRect);
+            win32_window_dimension dimension = getWindowDimension(window);
 
             // Método que atualiza a janela
             // copiando o deviceContext
-            Win32UpdateWindow(deviceContext, &clientRect, X, Y, width, height);
+            Win32DisplayBufferInWindow(deviceContext, dimension.width, dimension.height, 
+                                       globalBackBuffer);
 
             EndPaint(window, &paint);
 
@@ -216,7 +235,10 @@ int CALLBACK WinMain(
 
     // Preenchendo todos os valores do Struct de janela
     // Atribuímos um DC (Device Context) próprio
-    //windowClass.style = CS_OWNDC|CS_HREDRAW|CS_VREDRAW;       // É um conjunto de de sinalizadores binários, um conjunto de bits com propriedades para a janela
+
+   Win32ResizeDIBSection(&globalBackBuffer, 1280, 720);   // Atualizando o buffer de desenho
+
+    windowClass.style = CS_HREDRAW|CS_VREDRAW;                // É um conjunto de de sinalizadores binários, um conjunto de bits com propriedades para a janela
     windowClass.lpfnWndProc = Win32MainWindowCallBack;        // É um ponteiro para uma função para determinar como a janela responde a eventos
     //windowClass.cbClsExtra;                                   // Serve para armazenar bytes extras junto a instância da janela
     //windowClass.cbWndExtra;                                   // Função semelhante ao cbClsExtra, onde armazenamos memória extra junto a instância da janela
@@ -237,17 +259,17 @@ int CALLBACK WinMain(
         // o método responsável por criar uma janela e passamos
         // como parâmetro os dados que queremos
         HWND window {CreateWindowExA(0,                               // Estilo da janela (A maneira como a janela se comporta a certas ações)
-                                           windowClass.lpszClassName,       // Nome da classe
-                                           "Handmade Hero",                 // Nome da janela
-                                           WS_OVERLAPPEDWINDOW|WS_VISIBLE,  // Comportamentos específicos da janela
-                                           CW_USEDEFAULT,                   // Posicao inicial X da janela
-                                           CW_USEDEFAULT,                   // Posicao inicial Y da janela
-                                           CW_USEDEFAULT,                   // Largura da janela
-                                           CW_USEDEFAULT,                   // Altura da janela
-                                           0,               // Identificador de janela pai (Serve para criar janelas menores que responde a essa janela pai)
-                                           0,               // Para utilizar um menu em janelas filho
-                                           instance,        // Identificador da instância da janela (Onde está a janela na memória)
-                                           0)};             // Ponteiro para um valor a ser passado para a janela
+                                     windowClass.lpszClassName,       // Nome da classe
+                                     "Handmade Hero",                 // Nome da janela
+                                     WS_OVERLAPPEDWINDOW|WS_VISIBLE,  // Comportamentos específicos da janela
+                                     CW_USEDEFAULT,                   // Posicao inicial X da janela
+                                     CW_USEDEFAULT,                   // Posicao inicial Y da janela
+                                     CW_USEDEFAULT,                   // Largura da janela
+                                     CW_USEDEFAULT,                   // Altura da janela
+                                     0,               // Identificador de janela pai (Serve para criar janelas menores que responde a essa janela pai)
+                                     0,               // Para utilizar um menu em janelas filho
+                                     instance,        // Identificador da instância da janela (Onde está a janela na memória)
+                                     0)};             // Ponteiro para um valor a ser passado para a janela
 
         // Verifica se a janela foi criada
         if (window) 
@@ -255,6 +277,7 @@ int CALLBACK WinMain(
             int XOffset = 0;
             int YOffset = 0;
             running = true; // inicia a variável que mantém o loop rodando
+            
             while (running) 
             {
                 // Loop que pede ao windows todas as mensagens pendentes
@@ -263,8 +286,8 @@ int CALLBACK WinMain(
                 // O código verifica se a mensagem é para a nossa janela
                 // e então trata ela.
 
-
                 MSG message;    // Variável mensagem
+                
                 while (PeekMessageA(&message, 0, 0, 0, PM_REMOVE))
                 {
                     // Se existe uma mensagem traduz e dispacha ela
@@ -281,17 +304,14 @@ int CALLBACK WinMain(
                     TranslateMessage(&message);
                     DispatchMessage(&message);
                 }
-                renderWeirdGradient(XOffset, YOffset);
+                renderWeirdGradient(globalBackBuffer, XOffset, YOffset);
 
                 HDC deviceContext = GetDC(window);
                 
-                RECT clientRect;
-                GetClientRect(window, &clientRect);
+                win32_window_dimension dimension = getWindowDimension(window);
 
-                int windowWidth {clientRect.right - clientRect.left};
-                int windowHeight {clientRect.bottom - clientRect.top};
-                
-                Win32UpdateWindow(deviceContext, &clientRect, 0, 0, windowWidth, windowHeight);
+                Win32DisplayBufferInWindow(deviceContext, dimension.width, dimension.height, 
+                                           globalBackBuffer);
                 
                 ReleaseDC(window, deviceContext);
                 
