@@ -1,52 +1,56 @@
-# Handmade Hero
+# Training Code: Handmade Hero
 
-## Estudo sobre desenvolvimento de jogos em baixo nível
+Desenvolvi esse código seguindo a série de Lives do canal *MollyRocket* em que **Casey Muratori** desenvolve um jogo em baixo nível, usando a linguagem de programação C, API do windows (Win32). O principal objetivo deste projeto é o estudo de programação de jogos em baixo nível, focando no alto desempenho e no entendimento da programação gráfica e de suas ferramentas.
 
-## Descrição:
+## Links e Referências:
 
-Este repositório contém o acompanhamento prático da série de lives Handmade Hero, criada por Casey Muratori. O objetivo principal deste projeto é compreender como jogos são construídos do zero absoluto, sem a utilização de engines prontas. O foco está no aprendizado de arquitetura de software em baixo nível, manipulação direta de memória, integração com a Win32 API para gerenciamento de janelas e contexto gráfico, além da compreensão profunda de como o código interage diretamente com o sistema operacional e os compiladores.
+![GUIDE HANDMADE HERO](https://guide.handmadehero.org/code/)
+![MOLLY ROCKET](https://www.youtube.com/@MollyRocket)
+![SITE/OLD HH ORG](https://mollyrocket.com/#handmade)
 
-## Pré-requisitos:
+## AVISO:
 
-    Sistema Operacional: Windows.
+Esse repositório não contém nenhum conteúdo ou asset pago, caso tenha interesse em adquirir os conteúdos, considere comprar no site oficial. Já mencionado acima.
 
-    Compilador: Microsoft Visual C++ (MSVC - cl), instalado via Build Tools for Visual Studio ou Visual Studio Community.
+## Dia: 005
 
-    Editor: Visual Studio Code (ou qualquer editor de texto de sua preferência).
+![Day_006_Gif](./ProgressImages/Day_5.gif)
 
-    Depurador: Visual Studio (para depuração avançada).
+Utilizamos a API do windows (Win32) para abrir uma janela, adicionar um título e responder as funções padrões de fechamento através das mensagens do sistema operacional. Também utilizamos um bitmap para realizar a renderização de pixels nessa janela, nós desenhamos nesse buffer armazenado na memória e depois copiamos todos os seus pixels para o bitmap da própria janela. Até o momento utilizamos um loop para desenhar um gradiente colorido que se move para o canto superior esquerdo.
 
-## instalação/Uso:
+## Ferramentas:
 
-    Clone este repositório em sua máquina local:
-   
-    git clone https://github.com/seu-usuario/nome-do-repositorio.git
+    IDE: Visual Studio Code (Escrever o código) / Visual Studio: Community (Debuggar)
 
-    Abra o terminal Developer Command Prompt for VS (prompt de comando do compilador C/C++ do Visual Studio).
+    Linguagem: C/C++
 
-    Navegue até a pasta do projeto.
+    Build System: Batch File + MSVC (Compilador de C/C++ da Microsoft)
 
-    Execute o script de build localizado na raiz do projeto:
-   
-    build.bat
+    API: Win32 | Libs: user32.lib + gdi32.lib
 
-    Para executar o projeto compilado, acesse a pasta de saída gerada pelo script (ex: build) e rode o executável .exe.
+    OS: Windows 10
 
-    Para depurar o código, abra a pasta da solução ou adicione o projeto ao Visual Studio e inicie a sessão de depuração (F5).
+## Build e Debug:
 
-## Tecnologias:
+Caso queira ver o código em funcionamento siga os passos abaixo:
 
-    Linguagem C / C++
+    Clone o Repositório: git clone https://github.com/NickyDeviley/TC_HandmadeHero.git
 
-    Win32 API (Manipulação nativa do Windows)
+Após ter o repositório clonado use o terminal para rodar o "Shell.bat" no diretório: 
 
-    MSVC (cl) (Compilador oficial C/C++ da Microsoft)
+    cd \handmade\misc
 
-    Batch Script (build.bat) (Automação de compilação sem depender de IDE)
+    shell
 
-    Visual Studio Code (Editor de código)
+Depois agora entre na pasta **code** e execute o arquivo "build.bat" para gerar um executável:
 
-    Visual Studio (Ambiente de depuração)
+    cd \handmade\code
+
+    build
+
+Para debuggar o projeto use:
+
+    devenv \handmade\build\win32_handmade.exe
 
 ## Licença:
 
