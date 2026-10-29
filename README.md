@@ -14,7 +14,7 @@ Esse repositório não contém nenhum conteúdo ou asset pago, caso tenha intere
 
 ## Dia: 005
 
-![Day_006_Gif](./ProgressImages/Day_5.gif)
+![Day_005_Gif](./ProgressImages/Day_005.gif)
 
 Utilizamos a API do windows (Win32) para abrir uma janela, adicionar um título e responder as funções padrões de fechamento através das mensagens do sistema operacional. Também utilizamos um bitmap para realizar a renderização de pixels nessa janela, nós desenhamos nesse buffer armazenado na memória e depois copiamos todos os seus pixels para o bitmap da própria janela. Até o momento utilizamos um loop para desenhar um gradiente colorido que se move para o canto superior esquerdo.
 
