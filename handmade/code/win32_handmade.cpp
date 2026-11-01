@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdint.h>
+#include <xinput.h>
 /*
     Para criar uma aplicação Windows, que utiliza a Win32
     para manipular janelas, aúdio, etc. Utilização o método
@@ -32,10 +33,51 @@ struct win32_window_dimension
 global_variable bool running;               // Mantém o programa aberto
 global_variable win32_offscreen_buffer globalBackBuffer;
 
+// Essas linhas são geradas pelo código abaixo
+//typedef DWORD WINAPI x_input_get_state(DWORD dwUserIndex, XINPUT_STATE *pState);            
+//typedef DWORD WINAPI x_input_set_state(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration);    
+
+// NOTE(Nicholas): Aqui nós criamos duas "função apelido" isso é uma estratégia de 
+// código para declarar "código opcional". Nesse contexto que nós estamos usando  
+// agora, o objetivo é que, se não existir a biblioteca "Xinput.lib", o código 
+// iniciará normalmente essa é uma ótima estratégia para criar software multiplataforma.
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_STATE *pState)
+typedef X_INPUT_GET_STATE(x_input_get_state);
+X_INPUT_GET_STATE(XInputGetStateStub)
+{
+    return(0);
+}
+global_variable x_input_get_state *XInputGetState_ {XInputGetStateStub};                                         
+#define XInputGetState XInputGetState_                      
+
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION *pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state);
+X_INPUT_SET_STATE(XInputSetStateStub)
+{
+    return(0);
+}
+global_variable x_input_set_state *XInputSetState_ {XInputSetStateStub};
+#define XInputSetState XInputSetState_
+
+internal void
+win32LoadXInput(void)
+{
+    // Esse método tenta carregar a biblioteca que víncula os botões de
+    // controles conectados ao windows.
+
+    HMODULE XInputLibrary = LoadLibraryA("xinput1_4.dll");
+    if (XInputLibrary)
+    {
+        XInputGetState = (x_input_get_state *) GetProcAddress(XInputLibrary, "XInputGetState");
+        XInputSetState = (x_input_set_state *) GetProcAddress(XInputLibrary, "XInputSetState");
+    }
+    else
+    {/* Mensagem de erro avisando que falta o driver do controle */}
+}
+
 internal win32_window_dimension
 getWindowDimension (HWND window)
 {
-
     win32_window_dimension result;
 
     RECT clientRect;                        // Armazena o tamanho da janela
@@ -49,16 +91,16 @@ getWindowDimension (HWND window)
 }
 
 internal void
-renderWeirdGradient(win32_offscreen_buffer buffer, int blueOffset, int greenOffset)
+renderWeirdGradient(win32_offscreen_buffer *buffer, int blueOffset, int greenOffset)
 {
     // Este método é responsável por desenhar um gradiente
     // que se move no buffer.
 
-    uint8_t *row = (uint8_t *) buffer.memory;
-    for (int i = 0; i < buffer.height; ++i) 
+    uint8_t *row = (uint8_t *) buffer->memory;
+    for (int i = 0; i < buffer->height; ++i) 
     {
         uint32_t *pixel = (uint32_t *) row;
-        for (int j = 0; j < buffer.width; ++j) 
+        for (int j = 0; j < buffer->width; ++j) 
         {
             uint8_t blue = (uint8_t)(j + blueOffset);
             uint8_t green = (uint8_t)(i + greenOffset);
@@ -77,7 +119,7 @@ renderWeirdGradient(win32_offscreen_buffer buffer, int blueOffset, int greenOffs
 
             *pixel++ = ((red << 16) | (green << 8) | blue);
         }
-        row += buffer.pitch;
+        row += buffer->pitch;
     }
 }
 
@@ -130,9 +172,8 @@ Win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
 }
 
 internal void 
-Win32DisplayBufferInWindow(HDC deviceContext, 
-                           int windowWidth, int windowHeight, 
-                           win32_offscreen_buffer buffer) 
+Win32DisplayBufferInWindow(win32_offscreen_buffer *buffer, HDC deviceContext, 
+                           int windowWidth, int windowHeight)
 {
     // Copia o Buffer de pixels para dentro da janela
     // copia o bitmapMemory (buffer) para dentro da
@@ -145,9 +186,9 @@ Win32DisplayBufferInWindow(HDC deviceContext,
                   X, Y, width, height,          // Qual pedaço do buffer vamos copiar
                   */
                   0, 0, windowWidth, windowHeight,
-                  0, 0, buffer.width, buffer.height,
-                  buffer.memory,                 // Buffer que será copiado
-                  &buffer.info,                  // formato/tamanho do buffer
+                  0, 0, buffer->width, buffer->height,
+                  buffer->memory,                 // Buffer que será copiado
+                  &buffer->info,                  // formato/tamanho do buffer
                   DIB_RGB_COLORS, SRCCOPY);     // Indica que os pixels são cores RGB
 
 }
@@ -156,8 +197,8 @@ LRESULT CALLBACK
 Win32MainWindowCallBack(
     HWND window,        // Identificador de janela
     UINT message,       // O OS usa as mensagens para controlar e enviar informações à aplicativos
-    WPARAM WParam,      // Informações adicionais da mensagem
-    LPARAM LParam)      // Informações adicionais da mensagem
+    WPARAM WParam,      // Código de qual tecla foi pressionada (teclado/mouse)
+    LPARAM LParam)      // Informações adicionais da entrada (teclado/mouse)
 {
 
     // Quando o windows dispacha uma mensagem
@@ -185,6 +226,72 @@ Win32MainWindowCallBack(
         case WM_DESTROY: {                          // Destruir a janela
             running = false;
         } break;
+
+        case WM_SYSKEYDOWN:
+        case WM_SYSKEYUP:
+        case WM_KEYDOWN:
+        case WM_KEYUP:
+        {
+            uint32_t VKCode = WParam;
+            bool wasDown = (LParam & (1 << 30)) != 0;
+            bool isDown = ((LParam & (1 << 31)) == 0);
+
+            // Podemos usar o padrão Ansii para reconhecer a tecla
+            // Também podemos utilizar Macros como "VK_LEFT"
+            // E também podemos utilizar valores numéricos
+            if (wasDown != isDown)
+            {
+                if (VKCode == 'W')  
+                {
+                }
+                else if (VKCode == 'A')  
+                {
+                }
+                else if (VKCode == 'S')  
+                {
+                }
+                else if (VKCode == 'D')  
+                {
+                }
+                else if (VKCode == 'Q')  
+                {
+                }
+                else if (VKCode == 'E')  
+                {
+                }
+                else if (VKCode == 'W')  
+                {
+                }
+                else if (VKCode == VK_UP)  
+                {
+                }
+                else if (VKCode == VK_LEFT)  
+                {
+                }
+                else if (VKCode == VK_DOWN)  
+                {
+                }
+                else if (VKCode == VK_RIGHT)  
+                {
+                }
+                else if (VKCode == VK_ESCAPE)  
+                {
+                    OutputDebugStringA("ESCAPE: ");
+                    if (isDown)
+                    {
+                        OutputDebugStringA("Is down\n");
+                    }
+                    else if (wasDown)
+                    {
+                        OutputDebugStringA("was down\n");
+                    }
+                }
+                else if (VKCode == VK_SPACE)  
+                {
+                }    
+            }
+        } break;
+
         case WM_PAINT: {                            // Pintar algo na janela
 
             // contém as informações da área que podemos desenhar
@@ -205,8 +312,8 @@ Win32MainWindowCallBack(
 
             // Método que atualiza a janela
             // copiando o deviceContext
-            Win32DisplayBufferInWindow(deviceContext, dimension.width, dimension.height, 
-                                       globalBackBuffer);
+            Win32DisplayBufferInWindow(&globalBackBuffer, deviceContext, 
+                                       dimension.width, dimension.height);
 
             EndPaint(window, &paint);
 
@@ -228,7 +335,8 @@ int CALLBACK WinMain(
     LPSTR     commandLine,      // Equivalente ao argv, para adicionar parâmetros ao executar o programa
     int       showCode)         // Armazena o estado da janela através de anotações SW_*, que determinam como a janela do programa inicia (raramente utilizada)
 {
-
+    win32LoadXInput();
+ 
     // Criando uma Struct de Janela
     // Inicializando a struct com todos os valores zerados
     WNDCLASSA windowClass {};
@@ -286,7 +394,7 @@ int CALLBACK WinMain(
                 // O código verifica se a mensagem é para a nossa janela
                 // e então trata ela.
 
-                MSG message;    // Variável mensagem
+                MSG message;
                 
                 while (PeekMessageA(&message, 0, 0, 0, PM_REMOVE))
                 {
@@ -304,19 +412,66 @@ int CALLBACK WinMain(
                     TranslateMessage(&message);
                     DispatchMessage(&message);
                 }
-                renderWeirdGradient(globalBackBuffer, XOffset, YOffset);
 
-                HDC deviceContext = GetDC(window);
-                
-                win32_window_dimension dimension = getWindowDimension(window);
+                // TODO(Nicholas): Poderiamos colocar mais frequentemente
+                for (DWORD controllerIndex = 0; 
+                     controllerIndex < XUSER_MAX_COUNT; 
+                     ++controllerIndex)
+                {
+                    // A biblioteca Xinput apenas nos da acesso as entradas do controle
+                    // quando nós pedimos por isso. Existem 2 métodos para obter entrada
+                    // de dispositivos "Interrupt" e "pulling".
 
-                Win32DisplayBufferInWindow(deviceContext, dimension.width, dimension.height, 
-                                           globalBackBuffer);
+                    XINPUT_STATE controllerState;
+                    if (XInputGetState(controllerIndex, &controllerState) == ERROR_SUCCESS)
+                    {
+                        // NOTE(Nicholas): O controle está plugado
+                        XINPUT_GAMEPAD *pad = &controllerState.Gamepad;
+
+                        bool up = pad->wButtons & XINPUT_GAMEPAD_DPAD_UP;
+                        bool down = pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN;
+                        bool left = pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT;
+                        bool right = pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT;
+                        bool start = pad->wButtons & XINPUT_GAMEPAD_START;
+                        bool back = pad->wButtons & XINPUT_GAMEPAD_BACK;
+                        bool leftShoulder = pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER;
+                        bool rightShoulder = pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER;
+                        bool AButton = pad->wButtons & XINPUT_GAMEPAD_A;
+                        bool BButton = pad->wButtons & XINPUT_GAMEPAD_B;
+                        bool XButton = pad->wButtons & XINPUT_GAMEPAD_X;
+                        bool YButton = pad->wButtons & XINPUT_GAMEPAD_Y;
+
+                        uint16_t stickX = pad->sThumbLX;
+                        uint16_t stickY = pad->sThumbLY;
+
+                        XOffset += (stickX >> 8);
+                        YOffset += (stickY >> 8);
+                        
+                    }
+                    else 
+                    {
+                        // NOTA(Nicholas): O controle não está disponível
+                    }
+                }
+
+                //XINPUT_VIBRATION vibration;
+                //vibration.wLeftMotorSpeed = 65535;
+                //vibration.wRightMotorSpeed = 65535;
+                //XInputSetState(0, &vibration);
+
+                renderWeirdGradient(&globalBackBuffer, XOffset, YOffset);        // Renderizamos o gradiente no buffer que criamos em memória
+
+                HDC deviceContext = GetDC(window);                              // Captamos o "DeviceContext" da nossa janela
                 
-                ReleaseDC(window, deviceContext);
+                win32_window_dimension dimension = getWindowDimension(window);  // Pegamos a dimensão da nossa janela
                 
-                ++XOffset;
-                ++YOffset;
+                Win32DisplayBufferInWindow(&globalBackBuffer, deviceContext,
+                                           dimension.width, dimension.height); // E então nós copiamos o conteúdo do buffer para a janela
+                                           
+                ReleaseDC(window, deviceContext);                               // E então devolvemos o "DeviceContext"
+               
+                //++XOffset;  // Variáveis que permitem desenhar o Gradiente
+                //++YOffset;
             }
         }
         else 
