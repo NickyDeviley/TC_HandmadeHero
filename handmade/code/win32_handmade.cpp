@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <xinput.h>
+#include <dsound.h>
 /*
     Para criar uma aplicação Windows, que utiliza a Win32
     para manipular janelas, aúdio, etc. Utilização o método
@@ -15,13 +16,15 @@
 #define local_persistent static             // Variável local persistente, ficam salvas após o contexto onde foram declaradas terminar
 #define global_variable static              // Variável global, funciona apenas neste arquivo
 
+typedef int32_t bool32;
+
 struct win32_offscreen_buffer
 {
     BITMAPINFO info;      // Guarda as informações do buffer, tamanho/formato
     void *memory;         // Ponteiro para buffer onde nossos pixels são desenhados
     int width;
     int height;
-    int pitch;
+    int pitch;            //
 };
 
 struct win32_window_dimension
@@ -45,7 +48,7 @@ global_variable win32_offscreen_buffer globalBackBuffer;
 typedef X_INPUT_GET_STATE(x_input_get_state);
 X_INPUT_GET_STATE(XInputGetStateStub)
 {
-    return(0);
+    return(ERROR_DEVICE_NOT_CONNECTED);
 }
 global_variable x_input_get_state *XInputGetState_ {XInputGetStateStub};                                         
 #define XInputGetState XInputGetState_                      
@@ -54,10 +57,13 @@ global_variable x_input_get_state *XInputGetState_ {XInputGetStateStub};
 typedef X_INPUT_SET_STATE(x_input_set_state);
 X_INPUT_SET_STATE(XInputSetStateStub)
 {
-    return(0);
+    return(ERROR_DEVICE_NOT_CONNECTED);
 }
 global_variable x_input_set_state *XInputSetState_ {XInputSetStateStub};
 #define XInputSetState XInputSetState_
+
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
 
 internal void
 win32LoadXInput(void)
@@ -73,6 +79,86 @@ win32LoadXInput(void)
     }
     else
     {/* Mensagem de erro avisando que falta o driver do controle */}
+}
+
+internal void
+win32InitDSound(HWND window, int32_t samplesPerSecond, int32_t bufferSize)
+{
+    // NOTE(Nicholas): Carregar a biblioteca
+    HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+
+    if (DSoundLibrary)
+    {
+        // NOTE(Nicholas): Get a DirectSound object!
+        direct_sound_create *directSoundCreate = (direct_sound_create *) 
+            GetProcAddress(DSoundLibrary, "DirectSoundCreate");
+
+        LPDIRECTSOUND directSound;
+        if (directSoundCreate && SUCCEEDED(directSoundCreate(0, &directSound, 0)))
+        {
+            WAVEFORMATEX waveFormat {};
+            waveFormat.wFormatTag = WAVE_FORMAT_PCM; 
+            waveFormat.nChannels = 2;
+            waveFormat.nSamplesPerSec = samplesPerSecond;
+            waveFormat.wBitsPerSample = 16; 
+            waveFormat.nBlockAlign = (waveFormat.nChannels * waveFormat.wBitsPerSample) / 8;
+            waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
+            waveFormat.cbSize;
+         
+            if (SUCCEEDED(directSound->SetCooperativeLevel(window, DSSCL_PRIORITY)))
+            {
+                DSBUFFERDESC bufferDescription {};
+                bufferDescription.dwSize = sizeof(bufferDescription);
+                bufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
+
+                // NOTE(Nicky): "Create" a primary buffer
+                LPDIRECTSOUNDBUFFER primaryBuffer;
+                if (SUCCEEDED(directSound->CreateSoundBuffer(&bufferDescription, &primaryBuffer, 0)))
+                {
+                    HRESULT error {primaryBuffer->SetFormat(&waveFormat)};
+                    if (SUCCEEDED(error))
+                    {
+                        // NOTE(Nicky): We have finally set the format
+                        OutputDebugStringA("Primary Buffer Created");
+                    }
+                    else
+                    {
+                        // TODO(Nicky): Diagnostic
+                    }
+                }
+                else
+                {
+                    // TODO(Nicky): Diagnostic
+                }
+            }
+            else 
+            {
+                // TODO(Nicky): Diagnostic
+            }
+
+            // NOTE(Nicky): "Create" a secundary buffer
+            DSBUFFERDESC bufferDescription {};
+            bufferDescription.dwSize = sizeof(bufferDescription);
+            bufferDescription.dwFlags = 0;
+            bufferDescription.dwBufferBytes = bufferSize;
+            bufferDescription.lpwfxFormat = &waveFormat;
+            LPDIRECTSOUNDBUFFER secondaryBuffer;
+            HRESULT error {directSound->CreateSoundBuffer(&bufferDescription, &secondaryBuffer, 0)};
+            if (SUCCEEDED(error))
+            {
+                OutputDebugStringA("Secondary Buffer Created");
+            }
+            // NOTE(Nicky): Start it playing!
+        }
+        else
+        {
+            // TODO(Nicky): Diagnostic
+        }
+    }
+    else
+    {
+        // TODO(Nicky): Diagnostic
+    }
 }
 
 internal win32_window_dimension
@@ -143,9 +229,9 @@ Win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     // janela é no canto superior esquerdo.
 
     // Preenchendo todas as informações do buffer
-    buffer->info.bmiHeader.biSize = sizeof(buffer->info.bmiHeader);         // Especifica o número de byts exigidos pela estrutura
-    buffer->info.bmiHeader.biWidth = buffer->width;                         // especifica a largura do bitmap em pixels
-    buffer->info.bmiHeader.biHeight = -buffer->height;                      // especifica a altura do bitmap em pixels
+    buffer->info.bmiHeader.biSize = sizeof(buffer->info.bmiHeader);       // Especifica o número de byts exigidos pela estrutura
+    buffer->info.bmiHeader.biWidth = buffer->width;                       // especifica a largura do bitmap em pixels
+    buffer->info.bmiHeader.biHeight = -buffer->height;                    // especifica a altura do bitmap em pixels
     buffer->info.bmiHeader.biPlanes = 1;                                  // Especifica o número de planos para o dispositivo de destino
     buffer->info.bmiHeader.biBitCount = 32;                               // Especifica o número de bits por pixel (32 bits -> 4 bytes)
     buffer->info.bmiHeader.biCompression = BI_RGB;                        // Sem compressão, os bits são as cores puras
@@ -158,7 +244,7 @@ Win32ResizeDIBSection(win32_offscreen_buffer *buffer, int width, int height)
     // Calculando o tamanho de bytes da janela
     // e alocando memória através da API do windows
     int bitmapMemorySize {(buffer->width * buffer->height) * bytePerPixel};
-    buffer->memory = VirtualAlloc(0, bitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);    
+    buffer->memory = VirtualAlloc(0, bitmapMemorySize, MEM_RESERVE|MEM_COMMIT, PAGE_READWRITE);    
 
     // A API do windows aloca memória através de páginas
     // isso é, a memória é dividida em pedaços de tamanho
@@ -180,16 +266,16 @@ Win32DisplayBufferInWindow(win32_offscreen_buffer *buffer, HDC deviceContext,
     // janela através do deviceContext (Acesso para a janela criada)
     // Graças a anotação "SRCCOPY"
 
-    StretchDIBits(deviceContext,                // Acesso ao buffer que queremos desenhar
+    StretchDIBits(deviceContext,                  // Acesso ao buffer que queremos desenhar
                   /*
-                  X, Y, width, height,          // Área que vamos pintar
-                  X, Y, width, height,          // Qual pedaço do buffer vamos copiar
+                  X, Y, width, height,            // Área que vamos pintar
+                  X, Y, width, height,            // Qual pedaço do buffer vamos copiar
                   */
                   0, 0, windowWidth, windowHeight,
                   0, 0, buffer->width, buffer->height,
                   buffer->memory,                 // Buffer que será copiado
                   &buffer->info,                  // formato/tamanho do buffer
-                  DIB_RGB_COLORS, SRCCOPY);     // Indica que os pixels são cores RGB
+                  DIB_RGB_COLORS, SRCCOPY);       // Indica que os pixels são cores RGB
 
 }
 
@@ -233,8 +319,8 @@ Win32MainWindowCallBack(
         case WM_KEYUP:
         {
             uint32_t VKCode = WParam;
-            bool wasDown = (LParam & (1 << 30)) != 0;
-            bool isDown = ((LParam & (1 << 31)) == 0);
+            bool32 wasDown = LParam & (1 << 30);
+            bool32 isDown = LParam & (1 << 31);
 
             // Podemos usar o padrão Ansii para reconhecer a tecla
             // Também podemos utilizar Macros como "VK_LEFT"
@@ -289,6 +375,12 @@ Win32MainWindowCallBack(
                 else if (VKCode == VK_SPACE)  
                 {
                 }    
+            }
+
+            bool32 AltKeyWasDown = LParam & (1 << 29);
+            if ((VKCode == VK_F4) && AltKeyWasDown)
+            {
+                running = false;
             }
         } break;
 
@@ -386,6 +478,8 @@ int CALLBACK WinMain(
             int YOffset = 0;
             running = true; // inicia a variável que mantém o loop rodando
             
+            win32InitDSound(window, 48000, 48000 * sizeof(int16_t) * 2);
+
             while (running) 
             {
                 // Loop que pede ao windows todas as mensagens pendentes
